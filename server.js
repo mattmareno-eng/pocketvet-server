@@ -6,6 +6,7 @@ app.use(cors());
 app.use(express.json());
 
 const ANTHROPIC_API = 'https://api.anthropic.com/v1/messages';
+const RESEND_API = 'https://api.resend.com/emails';
 
 // Usage tracking (in-memory for now)
 const usage = {};
@@ -17,7 +18,6 @@ const LIMITS = {
 };
 
 function getUserTier(userId) {
-  // Everyone is free tier for now — we'll add payments later
   return 'free';
 }
 
@@ -26,9 +26,84 @@ function getUsageKey(userId) {
   return `${userId}-${now.getFullYear()}-${now.getMonth()}`;
 }
 
+// Send welcome email via Resend
+async function sendWelcomeEmail(name, email) {
+  try {
+    const res = await fetch(RESEND_API, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${process.env.RESEND_API_KEY}`,
+      },
+      body: JSON.stringify({
+        from: 'PocketVet <onboarding@resend.dev>',
+        to: email,
+        subject: 'Welcome to PocketVet! 🐾',
+        html: `
+          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 40px 20px;">
+            <div style="background: #1a6b4a; border-radius: 16px; padding: 32px; text-align: center; margin-bottom: 32px;">
+              <h1 style="color: white; font-size: 32px; margin: 0 0 8px 0;">PocketVet 🐾</h1>
+              <p style="color: rgba(255,255,255,0.8); margin: 0; font-size: 16px;">Your AI Pet Health Assistant</p>
+            </div>
+            
+            <h2 style="color: #1a1f1c; font-size: 24px;">Welcome, ${name}! 👋</h2>
+            
+            <p style="color: #5a6460; font-size: 16px; line-height: 1.6;">
+              We're so excited to have you join PocketVet! You now have an AI-powered vet assistant in your pocket, ready to help with your pet's health questions anytime.
+            </p>
+
+            <div style="background: #e1f5ee; border-radius: 12px; padding: 24px; margin: 24px 0;">
+              <h3 style="color: #1a6b4a; margin: 0 0 16px 0;">What you can do with PocketVet:</h3>
+              <p style="margin: 8px 0; color: #1a1f1c;">💬 Ask any pet health question</p>
+              <p style="margin: 8px 0; color: #1a1f1c;">📋 Use the symptom checker</p>
+              <p style="margin: 8px 0; color: #1a1f1c;">🚨 Get emergency triage guidance</p>
+              <p style="margin: 8px 0; color: #1a1f1c;">🐾 Manage multiple pet profiles</p>
+            </div>
+
+            <div style="background: #faeeda; border-radius: 12px; padding: 20px; margin: 24px 0;">
+              <p style="color: #ba7517; margin: 0; font-size: 14px;">
+                <strong>Your Free Plan:</strong> You have <strong>10 free questions</strong> this month. Upgrade anytime for unlimited access!
+              </p>
+            </div>
+
+            <p style="color: #5a6460; font-size: 16px; line-height: 1.6;">
+              Open the app and add your first pet to get started. Our AI vet is ready when you are!
+            </p>
+
+            <div style="border-top: 1px solid #e5e7eb; margin-top: 32px; padding-top: 24px; text-align: center;">
+              <p style="color: #8a9590; font-size: 13px; margin: 0;">
+                PocketVet — AI Pet Health Assistant<br/>
+                <em>Always consult a licensed veterinarian for medical decisions.</em>
+              </p>
+            </div>
+          </div>
+        `,
+      }),
+    });
+    if (res.ok) {
+      console.log('Welcome email sent to:', email);
+    } else {
+      const err = await res.json();
+      console.log('Email error:', err);
+    }
+  } catch (err) {
+    console.log('Email send failed:', err.message);
+  }
+}
+
 // Health check
 app.get('/', (req, res) => {
   res.json({ status: 'PocketVet server is running!' });
+});
+
+// Welcome email endpoint
+app.post('/welcome', async (req, res) => {
+  const { name, email } = req.body;
+  if (!name || !email) {
+    return res.status(400).json({ error: 'Name and email required' });
+  }
+  await sendWelcomeEmail(name, email);
+  res.json({ success: true });
 });
 
 // Main AI endpoint
@@ -39,7 +114,6 @@ app.post('/chat', async (req, res) => {
     return res.status(400).json({ error: 'Missing required fields' });
   }
 
-  // Check usage limits
   const tier = getUserTier(userId);
   const key = getUsageKey(userId);
   const currentUsage = usage[key] || 0;
@@ -95,15 +169,9 @@ Guidelines:
     const data = await response.json();
     const reply = data.content[0].text;
 
-    // Increment usage
     usage[key] = currentUsage + 1;
 
-    res.json({
-      reply,
-      usage: currentUsage + 1,
-      limit,
-      tier,
-    });
+    res.json({ reply, usage: currentUsage + 1, limit, tier });
 
   } catch (err) {
     console.error('Server error:', err);
@@ -118,13 +186,7 @@ app.get('/usage/:userId', (req, res) => {
   const key = getUsageKey(userId);
   const currentUsage = usage[key] || 0;
   const limit = LIMITS[tier];
-
-  res.json({
-    usage: currentUsage,
-    limit,
-    tier,
-    remaining: limit - currentUsage,
-  });
+  res.json({ usage: currentUsage, limit, tier, remaining: limit - currentUsage });
 });
 
 const PORT = process.env.PORT || 3000;
