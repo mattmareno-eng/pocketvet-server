@@ -17,13 +17,46 @@ const LIMITS = {
   premium: 999999,
 };
 
-function getUserTier(userId) {
-  return 'free';
-}
+const VALID_TIERS = ['free', 'basic', 'premium'];
 
 function getUsageKey(userId) {
   const now = new Date();
   return `${userId}-${now.getFullYear()}-${now.getMonth()}`;
+}
+
+// Reads a user's current tier from Supabase. Defaults to 'free' if no
+// row exists yet (brand new user, or a user who has never reported a tier).
+//
+// NOTE: this is a self-reported tier — the app tells the server what tier
+// the user is on after RevenueCat confirms a purchase or restore. This is
+// fine for launch, but a more tamper-resistant approach down the line is
+// to verify tier changes via a RevenueCat webhook instead of trusting the
+// client's POST /tier call directly.
+async function getUserTier(userId) {
+  const { data, error } = await supabase
+    .from('user_tiers')
+    .select('tier')
+    .eq('id', userId)
+    .maybeSingle();
+
+  if (error) {
+    console.error('Supabase tier read error:', error.message);
+    return 'free';
+  }
+  return data?.tier || 'free';
+}
+
+// Writes a user's tier to Supabase.
+async function setUserTier(userId, tier) {
+  const { error } = await supabase
+    .from('user_tiers')
+    .upsert({ id: userId, tier, updated_at: new Date().toISOString() });
+
+  if (error) {
+    console.error('Supabase tier write error:', error.message);
+    return false;
+  }
+  return true;
 }
 
 // Reads the current usage count for a key from Supabase.
@@ -137,6 +170,25 @@ app.post('/welcome', async (req, res) => {
   res.json({ success: true });
 });
 
+// Updates a user's tier (called by the app right after RevenueCat confirms
+// a purchase or restore). Validates the tier value to prevent bad data.
+app.post('/tier', async (req, res) => {
+  const { userId, tier } = req.body;
+
+  if (!userId || !tier) {
+    return res.status(400).json({ error: 'Missing required fields' });
+  }
+  if (!VALID_TIERS.includes(tier)) {
+    return res.status(400).json({ error: 'Invalid tier' });
+  }
+
+  const success = await setUserTier(userId, tier);
+  if (!success) {
+    return res.status(500).json({ error: 'Failed to update tier' });
+  }
+  res.json({ success: true, tier });
+});
+
 // Main AI endpoint
 app.post('/chat', async (req, res) => {
   const { messages, pet, userId } = req.body;
@@ -145,7 +197,7 @@ app.post('/chat', async (req, res) => {
     return res.status(400).json({ error: 'Missing required fields' });
   }
 
-  const tier = getUserTier(userId);
+  const tier = await getUserTier(userId);
   const key = getUsageKey(userId);
   const limit = LIMITS[tier];
   const currentUsage = await getUsageCount(key);
@@ -218,7 +270,7 @@ Guidelines:
 // Usage check endpoint
 app.get('/usage/:userId', async (req, res) => {
   const { userId } = req.params;
-  const tier = getUserTier(userId);
+  const tier = await getUserTier(userId);
   const key = getUsageKey(userId);
   const limit = LIMITS[tier];
   const currentUsage = await getUsageCount(key);
