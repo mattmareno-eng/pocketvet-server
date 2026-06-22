@@ -1,5 +1,6 @@
 const express = require('express');
 const cors = require('cors');
+const { createClient } = require('@supabase/supabase-js');
 
 const app = express();
 app.use(cors());
@@ -8,8 +9,7 @@ app.use(express.json());
 const ANTHROPIC_API = 'https://api.anthropic.com/v1/messages';
 const RESEND_API = 'https://api.resend.com/emails';
 
-// Usage tracking (in-memory for now)
-const usage = {};
+const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY);
 
 const LIMITS = {
   free: 8,
@@ -24,6 +24,37 @@ function getUserTier(userId) {
 function getUsageKey(userId) {
   const now = new Date();
   return `${userId}-${now.getFullYear()}-${now.getMonth()}`;
+}
+
+// Reads the current usage count for a key from Supabase.
+// Returns 0 if no row exists yet (first question of the month for that user).
+async function getUsageCount(key) {
+  const { data, error } = await supabase
+    .from('usage_tracking')
+    .select('count')
+    .eq('id', key)
+    .maybeSingle();
+
+  if (error) {
+    console.error('Supabase read error:', error.message);
+    return 0;
+  }
+  return data?.count || 0;
+}
+
+// Increments (or creates) the usage row for a key, and returns the new count.
+async function incrementUsageCount(key) {
+  const current = await getUsageCount(key);
+  const next = current + 1;
+
+  const { error } = await supabase
+    .from('usage_tracking')
+    .upsert({ id: key, count: next, updated_at: new Date().toISOString() });
+
+  if (error) {
+    console.error('Supabase write error:', error.message);
+  }
+  return next;
 }
 
 // Send welcome email via Resend
@@ -116,8 +147,8 @@ app.post('/chat', async (req, res) => {
 
   const tier = getUserTier(userId);
   const key = getUsageKey(userId);
-  const currentUsage = usage[key] || 0;
   const limit = LIMITS[tier];
+  const currentUsage = await getUsageCount(key);
 
   if (currentUsage >= limit) {
     return res.status(429).json({
@@ -174,9 +205,9 @@ Guidelines:
     const data = await response.json();
     const reply = data.content[0].text;
 
-    usage[key] = currentUsage + 1;
+    const newUsage = await incrementUsageCount(key);
 
-    res.json({ reply, usage: currentUsage + 1, limit, tier });
+    res.json({ reply, usage: newUsage, limit, tier });
 
   } catch (err) {
     console.error('Server error:', err);
@@ -185,12 +216,12 @@ Guidelines:
 });
 
 // Usage check endpoint
-app.get('/usage/:userId', (req, res) => {
+app.get('/usage/:userId', async (req, res) => {
   const { userId } = req.params;
   const tier = getUserTier(userId);
   const key = getUsageKey(userId);
-  const currentUsage = usage[key] || 0;
   const limit = LIMITS[tier];
+  const currentUsage = await getUsageCount(key);
   res.json({ usage: currentUsage, limit, tier, remaining: limit - currentUsage });
 });
 
