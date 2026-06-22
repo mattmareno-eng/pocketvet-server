@@ -12,7 +12,7 @@ const RESEND_API = 'https://api.resend.com/emails';
 const usage = {};
 
 const LIMITS = {
-  free: 10,
+  free: 8,
   basic: 999999,
   premium: 999999,
 };
@@ -62,7 +62,7 @@ async function sendWelcomeEmail(name, email) {
 
             <div style="background: #faeeda; border-radius: 12px; padding: 20px; margin: 24px 0;">
               <p style="color: #ba7517; margin: 0; font-size: 14px;">
-                <strong>Your Free Plan:</strong> You have <strong>10 free questions</strong> this month. Upgrade anytime for unlimited access!
+                <strong>Your Free Plan:</strong> You have <strong>8 free questions</strong> this month. Upgrade anytime for unlimited access!
               </p>
             </div>
 
@@ -143,6 +143,11 @@ Guidelines:
   🟡 CALL YOUR VET — schedule within 1-3 days
   🔴 GO NOW — seek emergency care immediately
 - Keep responses concise and easy to read
+- Formatting rules (strict):
+  - Never use markdown headers or hashtags (no #, ##, ### etc. anywhere in your response)
+  - Never use asterisk bullet points or asterisks for emphasis markup other than **bold** for genuinely key terms (symptoms, actions, timeframes)
+  - For lists, use a hyphen followed by a space ("- like this") on its own line, never numbers, asterisks, or bullet symbols
+  - Do not use any other special formatting symbols (no underscores, no tildes, no backticks)
 - Always remind owners you complement but don't replace professional vet care`;
 
   try {
